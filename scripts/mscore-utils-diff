@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+
+function print_options() {
+  # $1=opt_col_width $2=opt_col_separator $3=long_opt_width $4=opt_separator
+  local desc_fmt="%s" # show descriptions
+  (( $3 == 0 )) && desc_fmt="%.0s" # hide descriptions if no padding after long option
+  local -r fmt="%$1s%s%-$3s${desc_fmt}"
+  printf "${fmt}$4" "-h" "$2" "--help"     "show help and exit"
+  printf "${fmt}\n" "-o" "$2" "--options"  "show options" # always newline after last option
+}
+
+function print_usage() {
+  cat <<EOF
+Usage: ${script} [options] files
+Usage: ${script} [$(print_options 0 "|" 0 "] [" )]
+EOF
+}
+
+function print_help() {
+  cat <<EOF
+mscore-utils-diff - compare MSCX/MSCZ files ignoring trivial changes to IDs, etc
+
+${script}  strips ID numbers and similar attributes from MuseScore files
+before calling an external diff program  (either 'git diff',  or 'diff' if 'git'
+is unavailable).  This makes the resulting diff much smaller and easier to read.
+${script} works on temporary copies of files; originals are not changed.
+
+$(print_usage)
+
+options:
+$(print_options 4 ", " 12 "\n")
+
+Any remaining options are passed to the external diff program.
+
+Note on MuseScore's file format:
+================================
+Certain elements in MuseScore's MSCX XML format, such as slurs and ties, have ID
+attributes  that  are  numbered  consecutively  from the  beginning  of the file
+(<Slur id="1">...<Slur id="2">..., etc.).  Adding or  removing any one of  these
+elements from a MuseScore file causes all subsequent ID numbers to change, hence
+resulting in a large diff. This makes important changes difficult to make out.
+EOF
+}
+
+function fatal_error() {
+  local -r message="$1"
+  cat >&2 <<EOF
+$(print_usage)
+${script}: error: ${message}
+EOF
+  exit 1
+}
+
+function to_lower_case(){ <<<"$*" tr "[:upper:]" "[:lower:]" ;}
+
+function mscore_diff() {
+  local -r tmp_dir="$(mktemp -d)" # will 'cd' here later to keep paths relative
+
+  local args=("$@")
+
+  local mscx_count=0 # includes any non MuseScore files
+
+  for (( i=0; i < ${#args[@]}; i++ )); do
+    local infile="${args[$i]}"
+    [[ -f "${infile}" ]] \
+      && [[ "$(to_lower_case "${infile##*.}")" == "mscx" ]] \
+      || continue # not an MSCX file
+    ((mscx_count++))
+    local outdir="${tmp_dir}/$mscx_count"
+    # ${outdir} is numbered to avoid collisions when similar paths are given.
+    mkdir -p "${outdir}"
+    local outfile="${outdir}/$(basename "${infile}")"
+    # remove IDs, beam and tuplet numbers, measure numbers, and ticks
+    sed -e 's| id="[0-9]*"| id=""|g' \
+        -e 's|<Beam\([^>]*\)>[0-9]*</Beam>|<Beam\1></Beam>|g' \
+        -e 's|<Tuplet\([^>]*\)>[0-9]*</Tuplet>|<Tuplet\1></Tuplet>|g' \
+        -e 's|<Measure \([^>]*\)number="[0-9]*"\([^>]*\)>|<Measure \1number=""\2>|g' \
+        -e 's|<tick\([^>]*\)>[0-9]*<tick/>|<tick\1></tick>|g' \
+      "${infile}" > "${outfile}"
+    args[$i]="${outfile}"
+  done
+
+  #cd "${tmp_dir}" # allows us to keep relative paths ('git diff' displays paths)
+
+  if [[ "${GIT_PAGER_IN_USE}" ]] && [[ ! "${GIT_DIFF_PATH_COUNTER}" ]]; then
+    # Script was called by 'git diff' via gitattributes textconv. This is the
+    # recommended way to use this script on MuseScore files in a git repository.
+    cat "${args[@]}" # just pass the stripped files back to git diff via STDOUT
+  elif [[ "$(which git)" ]]; then
+    # Not called by gitattributes textconv. Perhaps called directly by user?
+    if [[ "${GIT_DIFF_PATH_COUNTER}" ]]; then
+      # Called by 'git diff' as an external diff command (not recommended)
+      args=("${args[1]}" "${args[4]}") # See https://stackoverflow.com/a/7669988
+    fi
+    # call 'git diff' to get its nice formatting!
+    git diff --no-index --no-textconv --no-ext-diff "${args[@]}"
+  else
+    # revert back to ordinary diff
+    diff "${args[@]}"
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+
+function parse_args() {
+  case "$1" in
+    -h*|--help|--h* )
+        print_help
+      ;;
+    -o|--options )
+      print_options 0 " " 0 "\n"
+      ;;
+    "" )
+      fatal_error "no files or options specified"
+      ;;
+    * )
+      mscore_diff "$@"
+      ;;
+  esac
+}
+
+function main() {
+  local -r script="$(basename "${BASH_SOURCE[0]}")"
+  local -r script_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  local -r base_path="${script_dir}/.."
+  parse_args "$@"
+}
+
+main "$@"

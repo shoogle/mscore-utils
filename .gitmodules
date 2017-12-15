@@ -1,0 +1,3 @@
+[submodule "mscore-utils-python"]
+	path = mscore-utils-python
+	url = https://github.com/shoogle/mscore-utils-python.git

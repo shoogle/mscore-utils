@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# bash completion for mscore-utils
+
+# check completion functions are enabled (usually defined in
+# /etc/bash_completion, sometimes under /usr or /usr/local)
+[[ "$(type -t _get_comp_words_by_ref)" == "function" ]] \
+&& [[ "$(type -t _command_offset)" == "function" ]] \
+&& [[ "$(type -t _longopt)" == "function" ]] \
+|| return 1 # stop sourcing here if required functions not present
+
+
+# set environment variables
+
+export MSCORE_UTILS_COMPLETIONS_DIR=\
+"$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export MSCORE_UTILS_BASE_PATH=\
+"$(cd "${MSCORE_UTILS_COMPLETIONS_DIR}/../.." && pwd)"
+
+
+# load helper functions (named like: "__mubchf__function_name")
+
+source "${MSCORE_UTILS_COMPLETIONS_DIR}/helper-functions"
+
+
+# define and set completion functions for mscore-utils commands
+
+function _mscore_utils_diff() {
+  if (($COMP_CWORD == 1)); then
+    __mubchf__from_arguments "" --options && return # use internal completions
+  fi
+  if [[ "$(which git)" ]]; then
+    __mubchf__comp_line_insert_words 1 git diff
+  else
+    __mubchf__comp_line_insert_words 1 diff
+  fi
+  _command_offset 1 # use completions for external diff program
+}
+complete -o default -o bashdefault -F _mscore_utils_diff mscore-utils-diff
+
+function _mscore_utils_runzip() {
+  if (($COMP_CWORD == 1)); then
+    __mubchf__from_arguments "" --options && return # use internal completions
+  fi
+  _command_offset 1 # use completions for external command
+}
+complete -o default -o bashdefault -F _mscore_utils_runzip mscore-utils-runzip
+
+
+# load completion scripts for any remaining commands
+
+for completion_script in \
+      "${MSCORE_UTILS_BASE_PATH}"/mscore-utils-*/etc/bash_completion.d/*
+do
+  source "${completion_script}"
+done
+
+
+# completion function for mscore-utils itself
+
+function _mscore_utils() {
+  if [[ "${_MSCORE_UTILS_DYNAMIC_COMPLETIONS}" ]]; then
+    # If this env variable is set then reload completion function definitions
+    # every time user attempts completion. Useful during development.
+    source "${MSCORE_UTILS_COMPLETIONS_DIR}/mscore-utils" # source _this_ file
+    # call the updated version of this function, avoiding infinite recursion
+    _MSCORE_UTILS_DYNAMIC_COMPLETIONS="" _mscore_utils "$@"
+    return
+  fi
+
+  if (( $COMP_CWORD == 1 )); then
+    compopt +o default +o bashdefault # disable completion on filenames, etc
+    __mubchf__from_arguments help --options --commands
+  elif (( $COMP_CWORD == 2 )) && [[ "${COMP_WORDS[1]}" =~ ^-?-?h(elp)?.*$ ]]; then
+    compopt +o default +o bashdefault # disable completion on filenames, etc
+    __mubchf__from_arguments "" --options --commands
+  else
+    local -r command="${COMP_WORDS[1]}"
+    local cmd_path
+    for path in \
+        "${MSCORE_UTILS_BASE_PATH}/scripts/mscore-utils-${command}" \
+        "${MSCORE_UTILS_BASE_PATH}"/mscore-utils-*/bin/mscore-utils-"${command}"
+    do
+      if [[ -f "${path}" ]] && [[ -x "${path}" ]]; then
+        cmd_path="${path}"
+        break
+      fi
+    done
+    __mubchf__comp_line_delete_word 1
+    __mubchf__comp_line_insert_words 1 "${cmd_path}"
+    _command_offset 1 # use the completion rules for ${command}
+  fi
+}
+complete -o default -o bashdefault -F _mscore_utils mscore-utils

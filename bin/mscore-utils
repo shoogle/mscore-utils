@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+
+function print_options() {
+  # $1=opt_col_width $2=opt_col_separator $3=long_opt_width $4=opt_separator
+  local desc_fmt="%s" # show descriptions
+  (( $3 == 0 )) && desc_fmt="%.0s" # hide descriptions if no padding after long option
+  local -r fmt="%$1s%s%-$3s${desc_fmt}"
+  printf "${fmt}$4" "-h" "$2" "--help"     "show help and exit"
+  printf "${fmt}$4" "-o" "$2" "--options"  "show options"
+  printf "${fmt}\n" "-c" "$2" "--commands" "show commands" # always newline after last option
+}
+
+function print_commands() {
+  # $1=left_indent $2=cmd_col_width $3=cmd_separator
+  local desc_fmt="%s" # show descriptions
+  (( $2 == 0 )) && desc_fmt="%.0s" # hide descriptions if no padding after command
+  local -r fmt="%$1s%-$2s${desc_fmt}"
+  printf "${fmt}$3" "" "diff"   "compare MSCX/MSCZ files ignoring trivial changes to IDs, etc"
+  printf "${fmt}$3" "" "join"   "join multiple MuseScore files to create a single score"
+  printf "${fmt}\n" "" "runzip" "run commands on the MSCX text file within an MSCZ archive"
+}
+
+function print_usage() {
+  cat <<EOF
+Usage: ${script} [options] <command> [<args>]
+Usage: ${script} [$(print_options 0 "|" 0 "] [" )]
+Usage: ${script} [help] $(print_commands 0 0 "|") [<args>]
+EOF
+}
+
+function print_help() {
+  cat <<EOF
+${script} - scripts to manipulate MuseScore files
+
+$(print_usage)
+
+options:
+$(print_options 4 ", " 12 "\n")
+
+commands:
+$(print_commands 2 16 "\n")
+
+See '${script} help <command>' to read about a specific command.
+EOF
+}
+
+function fatal_error() {
+  local -r message="$1"
+  cat >&2 <<EOF
+$(print_usage)
+${script}: error: ${message}
+EOF
+  exit 1
+}
+
+function parse_args() {
+  local -r param="$1"
+  shift
+  case "${param}" in
+    -h*|--h*|help|h* )
+      if [[ "$1" =~ ^(-.*|h.*)?$ ]]; then
+        # regex prevents infinite loop if called with "help help" or similar
+        print_help # help for mscore-utils
+      else
+        parse_args "$1" "--help" # help for command in $1
+      fi
+      ;;
+    -o|--options )
+      print_options 0 " " 0 "\n"
+      ;;
+    -c|--commands )
+      print_commands 0 0 "\n"
+      ;;
+    -* )
+      fatal_error "unrecognized option '${param}'"
+      ;;
+    "" )
+      fatal_error "no option or command specified"
+      ;;
+    runzip )
+      # special handling for runzip command
+      "${base_path}/scripts/mscore-utils-runzip" "$@"
+      ;;
+    * )
+      # all other commands
+      for cmd_path in \
+        "${base_path}/scripts/mscore-utils-${param}" \
+        "${base_path}"/mscore-utils-*/bin/mscore-utils-"${param}"
+      do
+        if [[ -f "${cmd_path}" ]] && [[ -x "${cmd_path}" ]]; then
+          # send command to runzip to get MSCZ parsing for free
+          parse_args runzip "${cmd_path}" "$@"
+          exit
+        fi
+      done
+      fatal_error "unrecognized command '${param}'"
+      ;;
+  esac
+}
+
+function main() {
+  local -r script="$(basename "${BASH_SOURCE[0]}")"
+  local -r script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local -r base_path="${script_dir}/.."
+  parse_args "$@"
+}
+
+main "$@"

@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+
+function print_options() {
+  # $1=opt_col_width $2=opt_col_separator $3=long_opt_width $4=opt_separator
+  local desc_fmt="%s" # show descriptions
+  (( $3 == 0 )) && desc_fmt="%.0s" # hide descriptions if no padding after long option
+  local -r fmt="%$1s%s%-$3s${desc_fmt}"
+  printf "${fmt}$4" "-h" "$2" "--help"     "show help and exit"
+  printf "${fmt}\n" "-o" "$2" "--options"  "show options" # always newline after last option
+}
+
+function print_usage() {
+  cat <<EOF
+Usage: ${script} [options] <command> [<args>] files
+Usage: ${script} [$(print_options 0 "|" 0 "] [" )]
+EOF
+}
+
+function print_help() {
+  cat <<EOF
+${script} - run commands on the MSCX text file inside an MSCZ archive
+
+${script} checks to see if any MSCZ files have been given as arguments
+to an external command. The MSCZ files are extracted into a temporary directory,
+and the external command is called on the resulting MSCX files. This enables
+'grep', 'sed', 'diff' and similar utilities to be used on MSCZ files.
+
+$(print_usage)
+
+options:
+$(print_options 4 ", " 12 "\n")
+
+Any remaining options are passed to the external command.
+EOF
+}
+
+function fatal_error() {
+  local -r message="$1"
+  cat >&2 <<EOF
+$(print_usage)
+${script}: error: ${message}
+EOF
+  exit 1
+}
+
+function to_lower_case(){ <<<"$*" tr "[:upper:]" "[:lower:]" ;}
+
+function mscore_runzip() {
+  local -r tmp_dir="$(mktemp -d)"
+
+  local args=("$@") mscz_files_in=() mscx_files_out=() mscx_shasums=()
+
+  local mscz_count=0
+  # unpack MSCZ files
+  for (( i=0; i < ${#args[@]}; i++ )); do
+    local infile="${args[$i]}"
+    [[ -f "${infile}" ]] \
+      && [[ "$(to_lower_case "${infile##*.}")" == "mscz" ]] \
+      || continue # not an MSCZ file
+    ((mscz_count++))
+    local outdir="${tmp_dir}/$mscz_count" #/${infile}"
+    # ${outdir} is numbered to avoid collisions when similar paths are given.
+    mkdir -p "${outdir}"
+    unzip "${infile}" -d "${outdir}" >/dev/null
+    # MSCZ and MSCX within it can have different names (e.g. if MSCZ is renamed)
+    local outfile="$(find "${outdir}" -type f -iname "*.mscx" | head -n1)"
+    [[ "${outfile}" ]] || fatal_error "no MSCX file in MSCZ archive '${infile}'"
+    mscz_files_in[$mscz_count-1]="${infile}"
+    mscx_files_out[$mscz_count-1]="${outfile}"
+    mscx_shasums[$mscz_count-1]="$(shasum "${outfile}")"
+    args[$i]="${outfile}" # put extracted MSCX in arguments for extenal command
+  done
+
+  "${args[@]}" # run external command with modified arguments
+
+  # repack MSCZ files
+  local -r work_dir="${PWD}"
+  for (( i=0; i < $mscz_count; i++ )); do
+    local mscz_dest="${mscz_files_in[$i]}"
+    local mscx_dir="$(dirname "${mscx_files_out[$i]}")"
+    # only repack if MSCX has been actually modified (or if 'shasum' not found)
+    if ! shasum -c <<<"${mscx_shasums[$i]}" &>/dev/null; then
+      cd "${mscx_dir}"
+      find . -type f | xargs zip -9 "${tmp_dir}/mscz.zip" >/dev/null
+      cd "${work_dir}"
+      mv "${tmp_dir}/mscz.zip" "${mscz_dest}"
+    fi
+  done
+
+  rm -rf "${tmp_dir}"
+}
+
+function parse_args() {
+  case "$1" in
+    -h|--help|--h* )
+      print_help
+      ;;
+    -o|--options )
+      print_options 0 " " 0 "\n"
+      ;;
+    "" )
+      fatal_error "no files or options specified"
+      ;;
+    * )
+      mscore_runzip "$@"
+      ;;
+  esac
+}
+
+function main() {
+  local -r script="$(basename "${BASH_SOURCE[0]}")"
+  parse_args "$@"
+}
+
+main "$@"

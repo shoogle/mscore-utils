@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# helper functions for mscore-utils bash completion
+
+function __mubchf__debug_comp_variables() {
+  # call this function from inside completion functions to see what's going on
+  cat >&2 <<EOF
+
+COMP_LINE[L=${#COMP_LINE}]: '${COMP_LINE}'
+COMP_POINT: $COMP_POINT    $(printf "%.0s " $(seq 1 $COMP_POINT))^
+COMP_WORDS[N=${#COMP_WORDS[@]}]: $(for a in "${COMP_WORDS[@]}"; do printf "'%q' " "${a}"; done )
+COMP_CWORD: $COMP_CWORD  ('${COMP_WORDS[$COMP_CWORD]}')
+COMP_WORDBREAKS[L=${#COMP_WORDBREAKS}]: $(printf "%q" "${COMP_WORDBREAKS}")
+COMP_TYPE: ${COMP_TYPE[@]}
+COMP_KEY: ${COMP_KEY[@]}
+COMPREPLY[N=${#COMPREPLY[@]}]: $(for a in "${COMPREPLY[@]}"; do printf "%q " "${a}"; done )
+
+EOF
+}
+
+function __mubchf__from_arguments() {
+  local options="$1" # words to complete against, separated by chars in ${IFS}
+  shift # now $@ is list of arguments for ${command} that return completions
+  local -r command="${COMP_WORDS[0]}"
+  [[ "$(which ${command})" ]] \
+    || { [[ -f "${command}" ]] && [[ -x "${command}" ]] ;} \
+    || return 1
+  for arg in "$@"; do
+    options="${options} $("${command}" "${arg}")"
+  done
+  local cur
+  _get_comp_words_by_ref cur
+  COMPREPLY=($(compgen -W "${options}" -- "${cur}"))
+  ((${#COMPREPLY[@]} != 0)) || return 1
+}
+
+function __mubchf__comp_line_insert_words() {
+  local -r word_index=$1 # insert before word with this index in $COMP_WORDS
+  shift # now $@ should contain the words to insert
+  local -r new_chars="$*"
+  if (($word_index > ${#COMP_WORDS[@]})); then
+    COMP_LINE="${COMP_LINE} ${new_chars}"
+    COMP_WORDS=("${COMP_WORDS[@]}" "$@")
+  elif (($word_index == 0)); then
+    COMP_LINE="${new_chars} ${COMP_LINE}"
+    ((COMP_POINT+=${#new_chars}+1))
+    COMP_WORDS=("$@" "${COMP_WORDS[@]}")
+    ((COMP_CWORD+=$#))
+  else
+    local -r word_before="${COMP_WORDS[$word_index-1]}"
+    for (( i=0; i <= ${#COMP_LINE}; i++ )); do
+      if [[ "${COMP_LINE:$i:${#word_before}}" == "${word_before}" ]]; then
+        local -r char_offset=$(($i+${#word_before}))
+        break
+      fi
+    done
+    COMP_LINE="${COMP_LINE:0:$char_offset} ${new_chars} ${COMP_LINE:$char_offset}"
+    COMP_WORDS=("${COMP_WORDS[@]:0:$word_index}" "$@" "${COMP_WORDS[@]:$word_index}")
+    if (($word_index <= $COMP_CWORD)); then
+      ((COMP_CWORD+=$#))
+      ((COMP_POINT+=${#new_chars}+2))
+    fi
+  fi
+}
+
+function __mubchf__comp_line_delete_word() {
+  # $1: index of word in $COMP_WORDS which is to be deleted from $COMP_LINE
+  local -r word_index=$1
+  (($word_index < ${#COMP_WORDS[@]})) || return 1
+  local -r word="${COMP_WORDS[$word_index]}"
+  for ((i=0; i <= ${#COMP_LINE}; i++)); do
+    if [[ "${COMP_LINE:$i:${#word}}" == "${word}" ]]; then
+      local -r char_offset=$i
+      break
+    fi
+  done
+  COMP_LINE="${COMP_LINE:0:$char_offset}${COMP_LINE:$(($char_offset+${#word}))}"
+  COMP_WORDS=("${COMP_WORDS[@]:0:$word_index}" "${COMP_WORDS[@]:$word_index+1}")
+  if (($word_index <= $COMP_CWORD)); then
+    ((COMP_CWORD--))
+    ((COMP_POINT-=${#word}))
+  fi
+}
