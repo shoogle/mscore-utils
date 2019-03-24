@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+function print_options() {
+  # $1=opt_col_width $2=opt_col_separator $3=long_opt_width $4=opt_separator
+  local desc_fmt="%s" # show descriptions
+  (( $3 == 0 )) && desc_fmt="%.0s" # hide descriptions if no padding after long option
+  local -r fmt="%$1s%s%-$3s${desc_fmt}"
+  printf "${fmt}$4" "-h" "$2" "--help"     "show help and exit"
+  printf "${fmt}\n" "-o" "$2" "--options"  "show options" # always newline after last option
+}
+
+function print_usage() {
+  cat <<EOF
+Usage: ${script} [options] <command> [<args>] files
+Usage: ${script} [$(print_options 0 "|" 0 "] [" )]
+EOF
+}
+
+function print_help() {
+  cat <<EOF
+${script} - extract the MSCX from an MSCZ archive
+
+${script} checks the MSCZ zip archive for errors and, if no errors are found,
+it extract the MSCX file and places it in the working directory.
+
+$(print_usage)
+
+options:
+$(print_options 4 ", " 12 "\n")
+
+Any remaining options are passed to the external command.
+EOF
+}
+
+function fatal_error() {
+  local -r message="$1"
+  cat >&2 <<EOF
+$(print_usage)
+${script}: error: ${message}
+EOF
+  exit 1
+}
+
+function to_lower_case(){ <<<"$*" tr "[:upper:]" "[:lower:]" ;}
+
+function mscore_unzip() {
+  local infile
+  for infile in "$@"; do
+    if [[ ! -f "${infile}" ]]; then
+      echo "${script}: not a file: '${infile}'"
+      continue
+    fi
+    if [[ "$(to_lower_case "${infile##*.}")" != "mscz" ]]; then
+      echo "${script}: not an MSCZ archive: '${infile}'"
+      continue
+    fi
+    if ! unzip -t "${infile}" &>/dev/null; then
+      echo "${script}: skipping corrupt archive: '${infile}'"
+      continue
+    fi
+    local mscx="$(zipinfo -1 "${infile}" | grep "\.mscx$" | head -n1)"
+    if [[ ! "${mscx}" ]]; then
+      echo "${script}: archive contains no MSCX: '${infile}'"
+      continue
+    fi
+    outfile="$(basename "${infile%.*}").mscx" # MSCX renamed like the MSCZ
+    unzip -xp "${infile}" "${mscx}" > "${outfile}" # extract the MSCX
+  done
+}
+
+function parse_args() {
+  case "$1" in
+    -h|--help|--h* )
+      print_help
+      ;;
+    -o|--options )
+      print_options 0 " " 0 "\n"
+      ;;
+    "" )
+      fatal_error "no files or options specified"
+      ;;
+    * )
+      mscore_unzip "$@"
+      ;;
+  esac
+}
+
+function main() {
+  local -r script="$(basename "${BASH_SOURCE[0]}")"
+  parse_args "$@"
+}
+
+main "$@"

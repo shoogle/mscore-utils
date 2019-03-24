@@ -17,6 +17,7 @@ function print_commands() {
   local -r fmt="%$1s%-$2s${desc_fmt}"
   printf "${fmt}$3" "" "diff"   "compare MSCX/MSCZ files ignoring trivial changes to IDs, etc"
   printf "${fmt}$3" "" "join"   "join multiple MuseScore files to create a single score"
+  printf "${fmt}$3" "" "unzip"  "extract the MSCX from an MSCZ archive"
   printf "${fmt}\n" "" "runzip" "run commands on the MSCX text file within an MSCZ archive"
 }
 
@@ -76,6 +77,10 @@ function parse_args() {
       ;;
     "" )
       fatal_error "no option or command specified"
+      ;;
+    unzip )
+      # special handling for unzip command to avoid runzip
+      "${base_path}/scripts/mscore-utils-unzip" "$@"
       ;;
     runzip )
       # special handling for runzip command
